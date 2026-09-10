@@ -1,4 +1,4 @@
-# **DISCLAIMER**
+# ⚠️⚠️⚠️ **DISCLAIMER** ⚠️⚠️⚠️
 This is completely vibe coded as I am not a software engineer. Use at your own discretion. I will not promise to develop, maintain, update or repair this. But feel free to use, share or fork!
 
 # Kraken Web
