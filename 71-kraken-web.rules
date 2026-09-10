@@ -1,0 +1,3 @@
+# NZXT Kraken Elite access for the users group
+SUBSYSTEM=="usb", ENV{DEVTYPE}=="usb_device", ATTR{idVendor}=="1e71", ATTR{idProduct}=="300c", GROUP="users", MODE="0660"
+KERNEL=="hidraw*", SUBSYSTEM=="hidraw", ATTRS{idVendor}=="1e71", ATTRS{idProduct}=="300c", GROUP="users", MODE="0660"
