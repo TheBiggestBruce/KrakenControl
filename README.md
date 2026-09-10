@@ -1,3 +1,6 @@
+# **DISCLAIMER**
+This is completely vibe coded as I am not a software engineer. Use at your own discretion. I will not promise to develop, maintain, update or repair this. But feel free to use, share or fork!
+
 # Kraken Web
 
 Local web control for the **NZXT Kraken Elite LCD** (`1e71:300c`, 640x640 display) on Linux. Provides a browser-based dashboard to upload, configure, stream, and display media on the cooler's LCD — with optional Q565 fast-memory acceleration.
