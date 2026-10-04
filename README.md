@@ -76,15 +76,17 @@ This keeps CoolerControl as the sole USB owner while bypassing asset-bucket allo
 ./enable-q565.sh
 ```
 
-- Installs only a systemd environment drop-in — does not replace system liquidctl files
+- Copies the patch and its Python-compatible Q565 encoder to `/usr/local/lib/kraken-web/q565_patch` and installs a systemd environment drop-in — does not replace system liquidctl files
+- The local copy is available before network/removable project drives mount at boot. Re-run `./enable-q565.sh` to update an existing installation.
 - Sustains **18–20 FPS** while the UI is open (18 FPS default live target)
 - Without the patch, live frames fall back to CoolerControl's REST API at a lower rate
 
 To disable, remove the drop-in and restart:
 
 ```bash
-rm /etc/systemd/system/coolercontrold.service.d/kraken-q565.conf
-systemctl --user daemon-reload
+sudo rm /etc/systemd/system/coolercontrold.service.d/kraken-q565.conf
+sudo systemctl daemon-reload
+sudo systemctl restart coolercontrold
 systemctl --user restart kraken-web
 ```
 
