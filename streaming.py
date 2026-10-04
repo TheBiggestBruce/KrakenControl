@@ -17,15 +17,6 @@ from media import draw_telemetry
 
 
 FRAME_SIZE = 640 * 640 * 3
-GPU_CHROMIUM_ARGS = [
-    "--ignore-gpu-blocklist",
-    "--enable-gpu-rasterization",
-    "--enable-zero-copy",
-    "--use-gl=angle",
-    "--use-angle=gl-egl",
-]
-
-
 class StreamError(RuntimeError):
     pass
 
@@ -279,29 +270,12 @@ class UrlStreamer:
 
             with sync_playwright() as playwright:
                 configured = os.environ.get("KRAKEN_CHROMIUM_PATH")
-                candidates = (
-                    [Path(configured)]
-                    if configured
-                    else sorted(
-                        Path(os.environ.get("PLAYWRIGHT_BROWSERS_PATH", "")).glob(
-                            "chromium-*/chrome-linux64/chrome"
-                        ),
-                        reverse=True,
-                    )
-                )
-                executable = next((path for path in candidates if path.is_file()), None)
-                browser_environment = dict(os.environ)
-                browser_environment.update(
-                    MANGOHUD="0",
-                    OBS_VKCAPTURE="0",
-                    __NV_PRIME_RENDER_OFFLOAD="1",
-                    __GLX_VENDOR_LIBRARY_NAME="nvidia",
-                )
+                # Let Playwright select its matching bundled headless Chromium.
+                # Forcing EGL/ANGLE GPU flags breaks Page.captureScreenshot on
+                # some driver updates, even when Chromium itself launches.
                 browser = playwright.chromium.launch(
                     headless=True,
-                    executable_path=str(executable) if executable else None,
-                    args=GPU_CHROMIUM_ARGS if executable else [],
-                    env=browser_environment,
+                    **({"executable_path": configured} if configured else {}),
                 )
                 page = browser.new_page(
                     viewport={"width": 640, "height": 640},

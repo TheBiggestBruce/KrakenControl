@@ -160,7 +160,7 @@ Override with `KRAKEN_WEB_DATA` environment variable.
 - The UI reports actual completed LCD uploads and drops stale decoded frames to avoid latency buildup
 - Uploaded GIF/video clips without telemetry play locally on the cooler and retain their encoded timing
 - Telemetry on URL, webpage, and animated uploaded assets is drawn into the live frame stream
-- Webpage rendering uses full Chromium with NVIDIA OpenGL/EGL compositing when available
+- Webpage rendering uses Playwright's bundled headless Chromium; set `KRAKEN_CHROMIUM_PATH` to override the executable if needed
 - Capture is capped at 18 FPS — extra frames above LCD throughput only increase CPU usage and drops
 
 ## License
