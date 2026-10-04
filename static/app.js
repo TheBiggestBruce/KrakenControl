@@ -185,6 +185,43 @@ $('#control-form').addEventListener('submit', async event => {
   } catch (error) { notify(error.message, true); }
 });
 
+$('#restart-service').addEventListener('click', async () => {
+  const button = $('#restart-service');
+  const state = $('#service-state');
+  button.disabled = true;
+  button.textContent = 'RESTARTING...';
+  state.textContent = 'Requesting service restart...';
+  try {
+    const previous = await request('/api/service/restart', {
+      method: 'POST', signal: AbortSignal.timeout(8000),
+    });
+    state.textContent = 'Restarting Kraken Web. Waiting for the dashboard to reconnect...';
+    const deadline = Date.now() + 60000;
+    while (Date.now() < deadline) {
+      await new Promise(resolve => setTimeout(resolve, 1000));
+      let current;
+      try {
+        current = await request('/api/service', {cache: 'no-store', signal: AbortSignal.timeout(2000)});
+      } catch (_) { continue; /* Expected while the service restarts. */ }
+      if (current.instance_id && current.instance_id !== previous.instance_id) {
+        state.textContent = 'Kraken Web restarted successfully.';
+        notify('Kraken Web restarted');
+        refreshStatus();
+        refreshScreen();
+        refreshTelemetryValues();
+        return;
+      }
+    }
+    throw new Error('Service has not reconnected. Try: systemctl --user restart kraken-web');
+  } catch (error) {
+    state.textContent = error.message;
+    notify(error.message, true);
+  } finally {
+    button.disabled = false;
+    button.textContent = 'RESTART KRAKEN WEB SERVICE';
+  }
+});
+
 async function showAsset(id) {
   try { await request(`/api/assets/${id}/show`, {method:'POST'}); notify('Media displayed'); refreshScreen(); await loadEditorState(); }
   catch (error) { notify(error.message, true); }

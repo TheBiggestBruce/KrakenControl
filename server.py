@@ -4,6 +4,7 @@ import asyncio
 import json
 import os
 import shutil
+import subprocess
 import uuid
 from contextlib import asynccontextmanager
 from pathlib import Path
@@ -29,6 +30,7 @@ MANIFEST = DATA_DIR / "assets.json"
 ACTIVE_FILE = DATA_DIR / "active-asset"
 STREAM_SETTINGS_FILE = DATA_DIR / "stream-settings.json"
 MAX_UPLOAD_BYTES = 500 * 1024 * 1024
+SERVICE_INSTANCE_ID = uuid.uuid4().hex
 
 display = KrakenDisplay()
 streamer = UrlStreamer(display)
@@ -217,7 +219,7 @@ async def status() -> dict[str, object]:
     if stream_state["active"]:
         hardware = last_hardware or {
             "connected": True,
-            "description": "Kraken stream active (sensor polling paused)",
+            "description": "Kraken live stream active",
         }
     else:
         try:
@@ -226,6 +228,36 @@ async def status() -> dict[str, object]:
         except DisplayError as exc:
             hardware = {"connected": False, "error": str(exc)}
     return {"hardware": hardware, "stream": stream_state, "overlay": active_overlay.state}
+
+
+@app.get("/api/service")
+async def service_status() -> dict[str, str]:
+    return {"instance_id": SERVICE_INSTANCE_ID}
+
+
+@app.post("/api/service/restart", status_code=202)
+async def restart_service() -> dict[str, str]:
+    if not os.environ.get("INVOCATION_ID"):
+        raise HTTPException(409, "Restart is available when running as kraken-web.service")
+    try:
+        # A separate user timer survives this service stopping and gives the
+        # response time to reach the browser before systemd restarts us.
+        result = await asyncio.to_thread(
+            subprocess.run,
+            [
+                "systemd-run", "--user", "--quiet", "--collect", "--on-active=2s",
+                f"--unit=kraken-web-restart-{SERVICE_INSTANCE_ID}",
+                "systemctl", "--user", "restart", "kraken-web.service",
+            ],
+            capture_output=True,
+            text=True,
+            timeout=5,
+        )
+    except (OSError, subprocess.TimeoutExpired) as exc:
+        raise HTTPException(503, f"Could not schedule service restart: {exc}") from exc
+    if result.returncode != 0:
+        raise HTTPException(503, result.stderr.strip() or "Could not schedule service restart")
+    return {"instance_id": SERVICE_INSTANCE_ID}
 
 
 @app.get("/api/telemetry")

@@ -37,6 +37,7 @@ class KrakenDisplay:
         self._device: Any | None = None
         self._cc_url = os.environ.get("COOLERCONTROL_URL", "http://127.0.0.1:11987")
         self._cc_token = os.environ.get("COOLERCONTROL_TOKEN")
+        self._cc_seen = False
         self._cc_device_cache: dict[str, Any] | None = None
         self._liqctld_socket = Path("/run/coolercontrold-liqctld.sock")
         self._liqctld_device_id: int | None = None
@@ -49,6 +50,9 @@ class KrakenDisplay:
         return {"Authorization": f"Bearer {self._cc_token}"}
 
     def _cc_request(self, method: str, path: str, **kwargs: Any) -> httpx.Response:
+        with self._lock:
+            self._cc_seen = True
+            self._disconnect_unlocked()
         try:
             response = httpx.request(
                 method,
@@ -69,9 +73,29 @@ class KrakenDisplay:
             raise DisplayError(f"CoolerControl request failed: {detail or exc}") from exc
 
     def _coolercontrol_available(self) -> bool:
-        try:
-            return httpx.get(f"{self._cc_url}/handshake", timeout=1).status_code == 200
-        except httpx.HTTPError:
+        with self._lock:
+            try:
+                response = httpx.get(f"{self._cc_url}/handshake", timeout=1)
+            except httpx.HTTPError:
+                response = None
+            if response is not None and response.status_code == 200:
+                self._cc_seen = True
+                self._disconnect_unlocked()
+                return True
+            # A daemon restart or failed health check must never give us USB
+            # ownership. Its sidecar may still be running or about to reconnect.
+            if (
+                response is not None
+                or self._cc_seen
+                or self._cc_token
+                or "COOLERCONTROL_URL" in os.environ
+                or self._liqctld_socket.exists()
+            ):
+                self._cc_seen = True
+                self._disconnect_unlocked()
+                self._cc_device_cache = None
+                self._liqctld_device_id = None
+                raise DisplayError("CoolerControl is unavailable; waiting for it to recover")
             return False
 
     def _cc_device(self) -> dict[str, Any]:
@@ -90,6 +114,9 @@ class KrakenDisplay:
         return self._cc_request("GET", f"/devices/{uid}/settings").json()["settings"]
 
     def _connect(self) -> Any:
+        # Recheck under the caller's lock before opening or reusing direct USB.
+        if self._coolercontrol_available():
+            raise DisplayError("CoolerControl is available; retry through its API")
         if self._device is not None:
             return self._device
 
@@ -107,17 +134,17 @@ class KrakenDisplay:
             raise DisplayError("No supported NZXT Kraken LCD device was found")
 
         device = candidates[0]
+        self._device = device
         try:
             device.connect()
             device.initialize(direct_access=True)
         except Exception as exc:
             try:
-                device.disconnect()
+                self._disconnect_unlocked()
             except Exception:
                 pass
             raise DisplayError(f"Could not initialize {device.description}: {exc}") from exc
 
-        self._device = device
         return device
 
     def _run(self, operation: str, *args: Any, **kwargs: Any) -> Any:
@@ -156,12 +183,18 @@ class KrakenDisplay:
 
     def show_live_frame(self, path: Path) -> None:
         """Send a transient frame without CoolerControl's multipart image copy."""
+        with self._lock:
+            self._show_live_frame_unlocked(path)
+
+    def _show_live_frame_unlocked(self, path: Path) -> None:
         try:
             socket_mode = self._liqctld_socket.stat().st_mode
             if not stat.S_ISSOCK(socket_mode) or not os.access(
                 self._liqctld_socket, os.R_OK | os.W_OK
             ):
                 raise OSError("liqctld socket is unavailable")
+            self._cc_seen = True
+            self._disconnect_unlocked()
             transport = httpx.HTTPTransport(uds=str(self._liqctld_socket))
             with httpx.Client(transport=transport, timeout=10) as client:
                 if self._liqctld_device_id is None:
@@ -178,6 +211,7 @@ class KrakenDisplay:
                 ).raise_for_status()
             return
         except (OSError, StopIteration, KeyError, ValueError, httpx.HTTPError):
+            self._liqctld_device_id = None
             self.show(path, "static")
 
     @property
@@ -318,10 +352,16 @@ class KrakenDisplay:
     def _disconnect_unlocked(self) -> None:
         if self._device is None:
             return
+        device = self._device
+        self._device = None
         try:
-            self._device.disconnect()
+            device.disconnect()
         finally:
-            self._device = None
+            # KrakenZ3 inherits a disconnect() that only closes HID. Its separate
+            # bulk interface must also be released for CoolerControl LCD uploads.
+            bulk_device = getattr(device, "bulk_device", None)
+            if bulk_device is not None:
+                bulk_device.close()
 
     def close(self) -> None:
         with self._lock:

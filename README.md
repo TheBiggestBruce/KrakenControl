@@ -90,6 +90,8 @@ systemctl --user restart kraken-web
 
 ## Service Management
 
+Use **Restart Kraken Web Service** in the dashboard's Display panel to restart the service. The page reconnects automatically when the new process is ready.
+
 ```bash
 systemctl --user status kraken-web
 systemctl --user restart kraken-web
@@ -128,7 +130,7 @@ Override with `KRAKEN_WEB_DATA` environment variable.
                               └───────────────┘
 ```
 
-- **Dual-control**: CoolerControl REST API when available; direct liquidctl USB fallback when CoolerControl is absent
+- **Dual-control**: CoolerControl REST API when available; direct liquidctl USB fallback when CoolerControl is absent. Once CoolerControl is detected (or its API token/URL is configured), temporary outages report an error instead of taking over its USB device.
 - **Frame-drop logic**: Streaming decoder keeps only the newest decoded frame (queue `maxsize=1`) to prevent latency buildup
 - **Live telemetry overlay**: Drawn into the live frame stream without rebuilding/replacing the entire GIF
 
@@ -137,6 +139,8 @@ Override with `KRAKEN_WEB_DATA` environment variable.
 | Method | Endpoint | Description |
 |--------|----------|-------------|
 | `GET` | `/api/status` | Device connection, stream, and overlay state |
+| `GET` | `/api/service` | Running service instance ID |
+| `POST` | `/api/service/restart` | Schedule a Kraken Web user-service restart |
 | `GET` | `/api/telemetry` | Current liquid/CPU/GPU temperatures |
 | `GET` | `/api/assets` | List asset library |
 | `DELETE` | `/api/assets/{id}` | Remove an asset |
