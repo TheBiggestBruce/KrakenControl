@@ -17,6 +17,7 @@ from pydantic import BaseModel, Field
 from display import DisplayError, KrakenDisplay
 from media import MediaError, prepare_media, render_preview
 from overlay import ActiveOverlay
+from screen_lock import ScreenLockMonitor
 from streaming import StreamError, UrlStreamer
 
 
@@ -32,7 +33,8 @@ STREAM_SETTINGS_FILE = DATA_DIR / "stream-settings.json"
 MAX_UPLOAD_BYTES = 500 * 1024 * 1024
 SERVICE_INSTANCE_ID = uuid.uuid4().hex
 
-display = KrakenDisplay()
+display = KrakenDisplay(DATA_DIR / "screen-lock-brightness.json")
+screen_lock = ScreenLockMonitor(display)
 streamer = UrlStreamer(display)
 active_overlay = ActiveOverlay(display)
 last_hardware: dict[str, object] = {}
@@ -45,10 +47,14 @@ async def lifespan(_: FastAPI):
     active = _active_entry()
     if active is not None:
         _activate_entry(active)
-    yield
-    active_overlay.stop()
-    streamer.stop()
-    display.close()
+    screen_lock.start()
+    try:
+        yield
+    finally:
+        active_overlay.stop()
+        streamer.stop()
+        await asyncio.to_thread(screen_lock.stop)
+        display.close()
 
 
 app = FastAPI(title="Kraken Web", version="0.1.0", lifespan=lifespan)
@@ -227,7 +233,10 @@ async def status() -> dict[str, object]:
             last_hardware = hardware
         except DisplayError as exc:
             hardware = {"connected": False, "error": str(exc)}
-    return {"hardware": hardware, "stream": stream_state, "overlay": active_overlay.state}
+    return {
+        "hardware": hardware, "stream": stream_state,
+        "overlay": active_overlay.state, "screen_lock": screen_lock.state,
+    }
 
 
 @app.get("/api/service")

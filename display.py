@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import json
 import os
 import stat
 import sys
@@ -32,7 +33,7 @@ class DisplayError(RuntimeError):
 class KrakenDisplay:
     """Use CoolerControl when available, with direct liquidctl as fallback."""
 
-    def __init__(self) -> None:
+    def __init__(self, lock_state_path: Path | None = None) -> None:
         self._lock = threading.RLock()
         self._device: Any | None = None
         self._cc_url = os.environ.get("COOLERCONTROL_URL", "http://127.0.0.1:11987")
@@ -41,6 +42,17 @@ class KrakenDisplay:
         self._cc_device_cache: dict[str, Any] | None = None
         self._liqctld_socket = Path("/run/coolercontrold-liqctld.sock")
         self._liqctld_device_id: int | None = None
+        self._lock_state_path = lock_state_path
+        self._resume_brightness: int | None = None
+        self._screen_locked = False
+        self._brightness: int | None = None
+        if lock_state_path is not None:
+            try:
+                value = json.loads(lock_state_path.read_text())
+                if type(value) is int and 0 <= value <= 100:
+                    self._resume_brightness = value
+            except (OSError, ValueError):
+                pass
 
     def _cc_headers(self) -> dict[str, str]:
         if not self._cc_token:
@@ -173,7 +185,9 @@ class KrakenDisplay:
                         f"/devices/{uid}/settings/lcd/lcd/images",
                         data={
                             "mode": "image",
-                            "brightness": str(lcd.get("brightness", 100)),
+                            "brightness": str(
+                                0 if self._resume_brightness is not None else lcd.get("brightness", 100)
+                            ),
                             "orientation": str(lcd.get("orientation", 0)),
                         },
                         files={"images[]": (path.name, image, media_type)},
@@ -188,31 +202,32 @@ class KrakenDisplay:
 
     def _show_live_frame_unlocked(self, path: Path) -> None:
         try:
-            socket_mode = self._liqctld_socket.stat().st_mode
-            if not stat.S_ISSOCK(socket_mode) or not os.access(
-                self._liqctld_socket, os.R_OK | os.W_OK
-            ):
+            if not self.live_frames_available:
                 raise OSError("liqctld socket is unavailable")
-            self._cc_seen = True
-            self._disconnect_unlocked()
-            transport = httpx.HTTPTransport(uds=str(self._liqctld_socket))
-            with httpx.Client(transport=transport, timeout=10) as client:
-                if self._liqctld_device_id is None:
-                    devices = client.get("http://liqctld/devices").raise_for_status().json()[
-                        "devices"
-                    ]
-                    device = next(
-                        item for item in devices if "Kraken" in item.get("description", "")
-                    )
-                    self._liqctld_device_id = int(device["id"])
-                client.put(
-                    f"http://liqctld/devices/{self._liqctld_device_id}/screen",
-                    json={"channel": "lcd", "mode": "static", "value": str(path)},
-                ).raise_for_status()
+            self._sidecar_screen("static", str(path))
             return
         except (OSError, StopIteration, KeyError, ValueError, httpx.HTTPError):
             self._liqctld_device_id = None
             self.show(path, "static")
+
+    def _sidecar_screen(self, mode: str, value: str) -> None:
+        """Caller holds _lock; the sidecar serializes these with other USB traffic."""
+        self._cc_seen = True
+        self._disconnect_unlocked()
+        transport = httpx.HTTPTransport(uds=str(self._liqctld_socket))
+        with httpx.Client(transport=transport, timeout=10) as client:
+            if self._liqctld_device_id is None:
+                devices = client.get("http://liqctld/devices").raise_for_status().json()[
+                    "devices"
+                ]
+                device = next(
+                    item for item in devices if "Kraken" in item.get("description", "")
+                )
+                self._liqctld_device_id = int(device["id"])
+            client.put(
+                f"http://liqctld/devices/{self._liqctld_device_id}/screen",
+                json={"channel": "lcd", "mode": mode, "value": value},
+            ).raise_for_status()
 
     @property
     def live_frames_available(self) -> bool:
@@ -226,18 +241,81 @@ class KrakenDisplay:
     def set_brightness(self, value: int) -> None:
         if not 0 <= value <= 100:
             raise ValueError("Brightness must be between 0 and 100")
+        with self._lock:
+            if self._resume_brightness is not None:
+                self._save_resume_brightness(value)
+                return
+            self._apply_brightness(value)
+            self._brightness = value
+
+    def _apply_brightness(self, value: int) -> None:
         if self._coolercontrol_available():
             self._set_cc_lcd(brightness=value)
         else:
             self._run("set_screen", "lcd", "brightness", value)
 
+    def _save_resume_brightness(self, value: int) -> None:
+        if self._lock_state_path is not None:
+            self._lock_state_path.parent.mkdir(parents=True, exist_ok=True)
+            temporary = self._lock_state_path.with_suffix(".tmp")
+            temporary.write_text(json.dumps(value))
+            temporary.replace(self._lock_state_path)
+        self._resume_brightness = value
+
+    def set_screen_locked(self, locked: bool) -> None:
+        """Temporarily blank the backlight while keeping media/decoders running."""
+        with self._lock:
+            if locked and self._screen_locked:
+                return
+            if not locked and self._resume_brightness is None:
+                return
+            coolercontrol = self._coolercontrol_available()
+            if coolercontrol:
+                lcd = next(
+                    (item["lcd"] for item in self._cc_settings() if item["channel_name"] == "lcd"),
+                    {},
+                )
+                brightness = lcd.get("brightness")
+                if brightness is None:
+                    raise DisplayError("CoolerControl has no current LCD brightness")
+                brightness = int(brightness)
+            else:
+                device = self._connect()
+                brightness = (
+                    self._brightness if self._brightness is not None else int(device.brightness)
+                )
+            if locked and self._resume_brightness is None:
+                # Save before touching hardware so a service restart can recover it.
+                self._save_resume_brightness(brightness)
+            value = 0 if locked else self._resume_brightness
+            if coolercontrol and self.live_frames_available and (locked or brightness == value):
+                try:
+                    # Unlike the REST settings endpoint, this changes only the
+                    # backlight and does not reload the current image/GIF.
+                    self._sidecar_screen("brightness", str(value))
+                except (OSError, StopIteration, KeyError, ValueError, httpx.HTTPError) as exc:
+                    self._liqctld_device_id = None
+                    raise DisplayError(f"Could not change Kraken backlight: {exc}") from exc
+            else:
+                self._apply_brightness(value)
+            if not locked:
+                if self._lock_state_path is not None:
+                    self._lock_state_path.unlink(missing_ok=True)
+                self._brightness = value
+                self._resume_brightness = None
+            self._screen_locked = locked
+
     def set_orientation(self, value: int) -> None:
         if value not in {0, 90, 180, 270}:
             raise ValueError("Orientation must be 0, 90, 180, or 270")
-        if self._coolercontrol_available():
-            self._set_cc_lcd(orientation=value)
-        else:
-            self._run("set_screen", "lcd", "orientation", value)
+        with self._lock:
+            if self._coolercontrol_available():
+                changes = {"orientation": value}
+                if self._resume_brightness is not None:
+                    changes["brightness"] = 0
+                self._set_cc_lcd(**changes)
+            else:
+                self._run("set_screen", "lcd", "orientation", value)
 
     def _set_cc_lcd(self, **changes: int) -> None:
         with self._lock:

@@ -19,6 +19,7 @@ Local web control for the **NZXT Kraken Elite LCD** (`1e71:300c`, 640x640 displa
 - **URL streaming** — HTTP(S) images, video, HLS, and MJPEG via ffmpeg
 - **Webpage streaming** — mirror a JavaScript-rendered 640x640 page through headless Chromium (Playwright)
 - **Brightness and orientation** — control LCD brightness (0–100) and rotation (0/90/180/270)
+- **Screen-lock trigger** — automatically blank the LCD when the desktop locks and restore its brightness on unlock, keeping playback running
 - **Asset library** — up to 50 prepared assets with quick-switch
 - **Systemd integration** — automatic startup as a user service
 - **Q565 acceleration** (opt-in) — 18–20 FPS live frames via CoolerControl's liquidctl sidecar
@@ -101,6 +102,22 @@ systemctl --user stop kraken-web
 journalctl --user -u kraken-web -f       # live logs
 ```
 
+## Screen-lock Behavior
+
+Kraken Web checks your user's systemd-logind graphical session lock state every
+second, even when the dashboard is closed. Locking turns the LCD backlight off;
+unlocking restores its previous brightness. Media, live streams, and overlays
+continue running. Brightness changes made while locked take effect on unlock.
+
+This is enabled by default and requires a desktop/locker that updates logind's
+`LockedHint` (Wayland or X11). With the accessible liquidctl sidecar, only the
+backlight changes; the REST fallback may reload the displayed asset. The saved
+brightness survives service restarts. Detection/control errors appear under
+`screen_lock` in `/api/status` and in the service log.
+
+To disable, set `KRAKEN_SCREEN_LOCK=0` in `~/.config/kraken-web.env` and restart
+`kraken-web.service`.
+
 ## Data Directory
 
 All runtime data is stored under `~/.local/share/kraken-web`:
@@ -113,6 +130,7 @@ All runtime data is stored under `~/.local/share/kraken-web`:
 ├── assets/            # Processed 640x640 assets
 ├── assets.json        # Asset library manifest
 ├── active-asset       # Currently displayed asset ID
+├── screen-lock-brightness.json # Recovery brightness (only while blanked)
 └── stream-settings.json
 ```
 
