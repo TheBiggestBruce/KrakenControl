@@ -34,7 +34,7 @@ MAX_UPLOAD_BYTES = 500 * 1024 * 1024
 SERVICE_INSTANCE_ID = uuid.uuid4().hex
 
 display = KrakenDisplay(DATA_DIR / "screen-lock-brightness.json")
-screen_lock = ScreenLockMonitor(display)
+screen_lock = ScreenLockMonitor(display, DATA_DIR / "screen-lock-settings.json")
 streamer = UrlStreamer(display)
 active_overlay = ActiveOverlay(display)
 last_hardware: dict[str, object] = {}
@@ -95,6 +95,10 @@ def _activate_entry(entry: dict[str, object]) -> None:
 class Controls(BaseModel):
     brightness: int | None = Field(default=None, ge=0, le=100)
     orientation: int | None = None
+
+
+class ScreenLockSettings(BaseModel):
+    enabled: bool
 
 
 class StreamRequest(BaseModel):
@@ -242,6 +246,19 @@ async def status() -> dict[str, object]:
 @app.get("/api/service")
 async def service_status() -> dict[str, str]:
     return {"instance_id": SERVICE_INSTANCE_ID}
+
+
+@app.get("/api/screen-lock")
+async def screen_lock_settings() -> dict[str, object]:
+    return screen_lock.state
+
+
+@app.put("/api/screen-lock")
+async def set_screen_lock_settings(values: ScreenLockSettings) -> dict[str, object]:
+    try:
+        return await asyncio.to_thread(screen_lock.set_enabled, values.enabled)
+    except OSError as exc:
+        raise HTTPException(500, f"Could not save screen-lock setting: {exc}") from exc
 
 
 @app.post("/api/service/restart", status_code=202)

@@ -4,7 +4,7 @@
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
   <title>Kraken Control</title>
-  <link rel="stylesheet" href="/static/style.css">
+  <link rel="stylesheet" href="/static/style.css?v=screen-lock-toggle-2">
 </head>
 <body>
   <div class="grain"></div>
@@ -120,6 +120,10 @@
           <label>Orientation<select name="orientation"><option value="0">0°</option><option value="90">90°</option><option value="180">180°</option><option value="270">270°</option></select></label>
           <button class="secondary" type="submit">APPLY DISPLAY SETTINGS</button>
         </form>
+        <div class="lock-controls">
+          <label class="checkbox-label"><input id="screen-lock-enabled" type="checkbox" aria-describedby="screen-lock-hint" disabled>Blank display when locked</label>
+          <p id="screen-lock-hint" class="note" role="status">Loading screen-lock preference...</p>
+        </div>
         <div class="service-controls">
           <button id="restart-service" class="secondary" type="button">RESTART KRAKEN WEB SERVICE</button>
           <p id="service-state" class="note" role="status">Restart the dashboard and its display connection.</p>
@@ -134,6 +138,6 @@
   </main>
 
   <div id="toast" role="status"></div>
-  <script src="/static/app.js"></script>
+  <script src="/static/app.js?v=screen-lock-toggle-2"></script>
 </body>
 </html>

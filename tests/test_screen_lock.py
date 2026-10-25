@@ -83,6 +83,44 @@ class SessionDetectionTests(unittest.TestCase):
         self.assertEqual(display.set_screen_locked.call_args_list, [call(True), call(True), call(False)])
 
 
+class ScreenLockPreferenceTests(unittest.TestCase):
+    def setUp(self):
+        directory = tempfile.TemporaryDirectory()
+        self.addCleanup(directory.cleanup)
+        self.settings_file = Path(directory.name) / "screen-lock-settings.json"
+
+    def test_saved_preference_overrides_environment_after_restart(self):
+        with patch.dict("os.environ", {"KRAKEN_SCREEN_LOCK": "0"}):
+            monitor = ScreenLockMonitor(Mock(), self.settings_file)
+            self.assertFalse(monitor.state["enabled"])
+            monitor.set_enabled(True)
+            restored = ScreenLockMonitor(Mock(), self.settings_file)
+            self.assertTrue(restored.state["enabled"])
+
+    def test_disable_while_locked_restores_backlight_and_enable_rechecks(self):
+        display = Mock()
+        monitor = ScreenLockMonitor(display, self.settings_file)
+        monitor.set_enabled(True)
+        with patch("screen_lock.desktop_locked", return_value=True) as detect:
+            monitor._check()
+            detect.reset_mock()
+            monitor.set_enabled(False)
+            monitor._check()
+            detect.assert_not_called()
+            monitor.set_enabled(True)
+            monitor._check()
+        self.assertEqual(display.set_screen_locked.call_args_list, [call(True), call(False), call(True)])
+
+    def test_failed_save_keeps_existing_preference(self):
+        monitor = ScreenLockMonitor(Mock(), self.settings_file)
+        monitor.set_enabled(True)
+        with patch.object(Path, "write_text", side_effect=OSError("Disk full")):
+            with self.assertRaises(OSError):
+                monitor.set_enabled(False)
+        self.assertTrue(monitor.state["enabled"])
+        self.assertTrue(ScreenLockMonitor(Mock(), self.settings_file).state["enabled"])
+
+
 class BacklightTests(unittest.TestCase):
     def setUp(self):
         directory = tempfile.TemporaryDirectory()

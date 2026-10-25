@@ -115,8 +115,11 @@ backlight changes; the REST fallback may reload the displayed asset. The saved
 brightness survives service restarts. Detection/control errors appear under
 `screen_lock` in `/api/status` and in the service log.
 
-To disable, set `KRAKEN_SCREEN_LOCK=0` in `~/.config/kraken-web.env` and restart
-`kraken-web.service`.
+Use **Blank display when locked** in the dashboard's Display panel to toggle this
+behavior. Changes apply within the next polling cycle (about a second) and survive
+service restarts. Turning it off while locked restores the backlight.
+`KRAKEN_SCREEN_LOCK=0` sets the initial default; a saved dashboard preference takes
+precedence.
 
 ## Data Directory
 
@@ -131,6 +134,7 @@ All runtime data is stored under `~/.local/share/kraken-web`:
 ├── assets.json        # Asset library manifest
 ├── active-asset       # Currently displayed asset ID
 ├── screen-lock-brightness.json # Recovery brightness (only while blanked)
+├── screen-lock-settings.json   # Saved screen-lock preference
 └── stream-settings.json
 ```
 
@@ -159,6 +163,8 @@ Override with `KRAKEN_WEB_DATA` environment variable.
 | Method | Endpoint | Description |
 |--------|----------|-------------|
 | `GET` | `/api/status` | Device connection, stream, and overlay state |
+| `GET` | `/api/screen-lock` | Screen-lock preference and monitor state |
+| `PUT` | `/api/screen-lock` | Save screen-lock preference (`enabled`: boolean) |
 | `GET` | `/api/service` | Running service instance ID |
 | `POST` | `/api/service/restart` | Schedule a Kraken Web user-service restart |
 | `GET` | `/api/telemetry` | Current liquid/CPU/GPU temperatures |

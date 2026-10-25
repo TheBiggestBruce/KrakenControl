@@ -185,6 +185,49 @@ $('#control-form').addEventListener('submit', async event => {
   } catch (error) { notify(error.message, true); }
 });
 
+const screenLockCheckbox = $('#screen-lock-enabled');
+const screenLockHint = $('#screen-lock-hint');
+let screenLockEnabled = false;
+
+function showScreenLockSettings(settings) {
+  screenLockEnabled = settings.enabled;
+  screenLockCheckbox.checked = settings.enabled;
+  screenLockHint.textContent = settings.enabled
+    ? 'Automatically turn off the backlight on lock and restore brightness on unlock.'
+    : 'Screen-lock blanking is off. The display stays on when you lock your desktop.';
+}
+
+async function loadScreenLockSettings() {
+  try {
+    showScreenLockSettings(await request('/api/screen-lock', {
+      cache: 'no-store', signal: AbortSignal.timeout(8000),
+    }));
+    screenLockCheckbox.disabled = false;
+  } catch (error) {
+    screenLockHint.textContent = error.name === 'TimeoutError'
+      ? 'Loading screen-lock preference timed out. Refresh the page to retry.'
+      : `Could not load screen-lock preference: ${error.message}`;
+  }
+}
+
+screenLockCheckbox.addEventListener('change', async () => {
+  screenLockCheckbox.disabled = true;
+  screenLockHint.textContent = 'Saving...';
+  try {
+    showScreenLockSettings(await request('/api/screen-lock', {
+      method: 'PUT', headers: {'Content-Type': 'application/json'},
+      body: JSON.stringify({enabled: screenLockCheckbox.checked}),
+    }));
+    notify('Screen-lock preference saved');
+  } catch (error) {
+    screenLockCheckbox.checked = screenLockEnabled;
+    screenLockHint.textContent = `Could not save screen-lock preference: ${error.message}`;
+    notify(error.message, true);
+  } finally {
+    screenLockCheckbox.disabled = false;
+  }
+});
+
 $('#restart-service').addEventListener('click', async () => {
   const button = $('#restart-service');
   const state = $('#service-state');
@@ -206,6 +249,7 @@ $('#restart-service').addEventListener('click', async () => {
       if (current.instance_id && current.instance_id !== previous.instance_id) {
         state.textContent = 'Kraken Web restarted successfully.';
         notify('Kraken Web restarted');
+        loadScreenLockSettings();
         refreshStatus();
         refreshScreen();
         refreshTelemetryValues();
@@ -341,6 +385,7 @@ async function loadEditorState() {
 
 loadAssets().catch(error => notify(error.message, true));
 loadStreamSettings().catch(error => notify(error.message, true));
+loadScreenLockSettings();
 refreshScreen();
 refreshTelemetryValues();
 loadEditorState().catch(error => notify(error.message, true));
