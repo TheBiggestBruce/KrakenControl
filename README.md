@@ -108,6 +108,8 @@ Kraken Web checks your user's systemd-logind graphical session lock state every
 second, even when the dashboard is closed. Locking turns the LCD backlight off;
 unlocking restores its previous brightness. Media, live streams, and overlays
 continue running. Brightness changes made while locked take effect on unlock.
+While locked, blanking is reapplied every five seconds so waking the PC or
+reinitializing the cooler cannot leave the backlight on until the next unlock.
 
 This is enabled by default and requires a desktop/locker that updates logind's
 `LockedHint` (Wayland or X11). With the accessible liquidctl sidecar, only the

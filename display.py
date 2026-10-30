@@ -5,6 +5,7 @@ import os
 import stat
 import sys
 import threading
+import time
 import mimetypes
 from pathlib import Path
 from typing import Any
@@ -24,6 +25,7 @@ from liquidctl import find_liquidctl_devices  # noqa: E402
 
 NZXT_VENDOR_ID = 0x1E71
 SUPPORTED_PRODUCTS = {0x300C, 0x300E, 0x3012, 0x3014}
+LOCK_BLANK_REFRESH_SECONDS = 5
 
 
 class DisplayError(RuntimeError):
@@ -45,6 +47,7 @@ class KrakenDisplay:
         self._lock_state_path = lock_state_path
         self._resume_brightness: int | None = None
         self._screen_locked = False
+        self._last_blank_at = 0.0
         self._brightness: int | None = None
         if lock_state_path is not None:
             try:
@@ -265,7 +268,14 @@ class KrakenDisplay:
     def set_screen_locked(self, locked: bool) -> None:
         """Temporarily blank the backlight while keeping media/decoders running."""
         with self._lock:
-            if locked and self._screen_locked:
+            # Resume/device reinitialization can restore the backlight without
+            # an unlock event. Periodically reassert zero, including after late
+            # daemon recovery. BOOTTIME includes time spent suspended.
+            if (
+                locked and self._screen_locked
+                and time.clock_gettime(time.CLOCK_BOOTTIME) - self._last_blank_at
+                < LOCK_BLANK_REFRESH_SECONDS
+            ):
                 return
             if not locked and self._resume_brightness is None:
                 return
@@ -304,6 +314,8 @@ class KrakenDisplay:
                 self._brightness = value
                 self._resume_brightness = None
             self._screen_locked = locked
+            if locked:
+                self._last_blank_at = time.clock_gettime(time.CLOCK_BOOTTIME)
 
     def set_orientation(self, value: int) -> None:
         if value not in {0, 90, 180, 270}:

@@ -130,6 +130,9 @@ class BacklightTests(unittest.TestCase):
         self.display._coolercontrol_available = Mock(return_value=False)
         self.display._connect = Mock(return_value=Mock(brightness=62))
         self.display._run = Mock()
+        clock = patch("display.time.clock_gettime", return_value=100.0)
+        self.clock = clock.start()
+        self.addCleanup(clock.stop)
 
     def test_lock_is_idempotent_and_restores_previous_brightness(self):
         self.display.set_screen_locked(True)
@@ -152,6 +155,56 @@ class BacklightTests(unittest.TestCase):
         self.display._run.assert_not_called()
         self.display.set_screen_locked(False)
         self.display._run.assert_called_once_with("set_screen", "lcd", "brightness", 0)
+
+    def test_wake_and_delayed_backend_reset_are_reblanked_until_unlock(self):
+        for backend in ("direct", "sidecar", "rest"):
+            with self.subTest(backend=backend):
+                display = KrakenDisplay(self.state_file)
+                hardware = {"brightness": 62}
+                settings = {"brightness": 62}
+                device = Mock(brightness=62)
+                display._coolercontrol_available = Mock(return_value=backend != "direct")
+                display._connect = Mock(return_value=device)
+                display._cc_settings = Mock(return_value=[{"channel_name": "lcd", "lcd": settings}])
+                display._run = Mock(side_effect=lambda *args: hardware.update(brightness=int(args[-1])))
+                display._sidecar_screen = Mock(side_effect=lambda mode, value: hardware.update(brightness=int(value)))
+
+                def apply_settings(**changes):
+                    settings.update(changes)
+                    hardware.update(changes)
+
+                display._set_cc_lcd = Mock(side_effect=apply_settings)
+                self.clock.return_value = 100.0
+                with patch.object(KrakenDisplay, "live_frames_available", new_callable=PropertyMock, return_value=backend == "sidecar"):
+                    display.set_screen_locked(True)
+                    self.assertEqual(hardware["brightness"], 0)
+                    for now in (200.0, 205.0):
+                        # Wake, then a later daemon reset; REST settings may
+                        # still report zero while the physical backlight is on.
+                        hardware["brightness"] = 100
+                        device.brightness = 100
+                        self.clock.return_value = now
+                        display.set_screen_locked(True)
+                        self.assertEqual(hardware["brightness"], 0)
+                        self.assertEqual(self.state_file.read_text(), "62")
+                    display.set_screen_locked(False)
+                    self.assertEqual(hardware["brightness"], 62)
+                    self.assertFalse(self.state_file.exists())
+
+    def test_failed_refresh_retries_next_poll_and_preserves_deferred_brightness(self):
+        self.display.set_screen_locked(True)
+        self.display.set_brightness(45)
+        self.clock.return_value = 200.0
+        self.display._run.side_effect = DisplayError("offline after resume")
+        with self.assertRaises(DisplayError):
+            self.display.set_screen_locked(True)
+        self.display._run.side_effect = None
+        self.display._run.reset_mock()
+        self.clock.return_value = 201.0
+        self.display.set_screen_locked(True)
+        self.display._run.assert_called_once_with("set_screen", "lcd", "brightness", 0)
+        self.display.set_screen_locked(False)
+        self.display._run.assert_called_with("set_screen", "lcd", "brightness", 45)
 
     def test_failed_off_and_restore_are_retried_without_losing_brightness(self):
         for locked in (True, False):
